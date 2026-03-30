@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-interface ResearchRequest {
-  jobUrl: string;
-  jobTitle?: string;
-  company?: string;
-}
-
 interface DecisionMaker {
   name: string;
   title: string;
@@ -23,304 +17,196 @@ interface ResearchResult {
     size?: string;
     industry?: string;
     website?: string;
-    location?: string;
   };
   suggestions: string[];
 }
 
-// Puter.js Grok integration - works without API key!
-async function searchWithPuterGrok(query: string): Promise<string> {
-  // Puter.js SDK call - no API key required
-  // Uses their free tier at puter.com
-  const response = await fetch('https://api.puter.com/drivers/call', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // Puter works without auth for basic usage
-      'Authorization': 'Bearer anon',
-    },
-    body: JSON.stringify({
-      interface: 'puter-chat',
-      driver: 'grok',
-      method: 'complete',
-      args: {
+// Use Grok API to search for decision makers
+// Grok has excellent real-time search capabilities
+async function searchWithGrok(company: string, jobTitle: string): Promise<DecisionMaker[]> {
+  // Try Grok direct API first (requires API key)
+  const GROK_API_KEY = process.env.GROK_API_KEY;
+  
+  // If no Grok key, use Puter.js free API
+  if (!GROK_API_KEY) {
+    return searchWithPuter(company, jobTitle);
+  }
+  
+  const prompt = `You are a professional researcher. Find decision makers who would hire for a "${jobTitle}" position at "${company}".
+
+Search for and provide:
+1. Full names of hiring managers, HR directors, department heads, or C-level executives
+2. Their job titles
+3. LinkedIn profile URLs if found
+4. Email addresses if publicly available
+
+Format each person as:
+NAME: [Full Name]
+TITLE: [Job Title]
+LINKEDIN: [LinkedIn URL or "Not found"]
+EMAIL: [Email or "Not found"]
+CONFIDENCE: [high/medium/low]
+---
+
+Focus on real, verifiable people. If you cannot find specific individuals, provide the most likely titles and departments to contact.`;
+
+  try {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-2-1212',
         messages: [
           {
             role: 'system',
-            content: `You are a research assistant specializing in finding business information. 
-            
-When given a company name and job title, find:
-1. Decision makers who would hire for that role
-2. Their names and titles (HR managers, department heads, CTOs, CEOs)
-3. LinkedIn profile URLs if available
-4. Email addresses if publicly available
-
-Format your response as structured data:
-DECISION_MAKER: Name | Title | LinkedIn URL | Email
-Repeat for each person found.
-
-Be factual and only include information you can verify. If uncertain, mark confidence as "low".`
+            content: 'You are a professional researcher specializing in finding business contacts. You have access to real-time information and can search for people. Always provide factual, verifiable information.'
           },
-          {
-            role: 'user',
-            content: query
-          }
+          { role: 'user', content: prompt }
         ],
-        model: 'grok-2-1212'
-      }
-    })
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    console.error('Puter API error:', error);
-    throw new Error(`Puter API failed: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return data.result?.message?.content || data.message?.content || data.result || '';
-}
-
-// Alternative: Use Puter's web interface approach
-async function searchWithPuterCloud(query: string): Promise<string> {
-  // Puter Cloud API - free tier available
-  const response = await fetch('https://puter-cloud-api.puter.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'grok-beta',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a business research assistant. Find decision makers for job positions. Format as: Name | Title | LinkedIn | Email'
-        },
-        {
-          role: 'user',
-          content: query
-        }
-      ]
-    })
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
-  }
-  
-  // Fallback to alternative approach
-  return searchWithPuterGrok(query);
-}
-
-// Extract job details from URL
-async function extractJobDetails(url: string): Promise<{ title: string; company: string; description: string }> {
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; JobResearchBot/1.0)'
-      }
+        temperature: 0.3,
+      }),
     });
-    const html = await response.text();
-    
-    // Extract title
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    let title = titleMatch ? titleMatch[1].split('|')[0].split('-')[0].trim() : 'Unknown Position';
-    
-    // Clean up title
-    title = title.replace(/hiring|jobs?|careers?|position/gi, '').trim();
-    
-    // Extract company - try multiple patterns
-    const companyPatterns = [
-      /at\s+([A-Z][A-Za-z\s&]+?)(?:\s*-|\s*\||\s*hiring)/i,
-      /(?:company|employer)[:\s]+([A-Z][A-Za-z\s&]+)/i,
-      /"company":\s*"([^"]+)"/i,
-      /data-company=["']([^"']+)["']/i,
-    ];
-    
-    let company = '';
-    for (const pattern of companyPatterns) {
-      const match = html.match(pattern);
-      if (match) {
-        company = match[1].trim();
-        break;
-      }
+
+    if (!response.ok) {
+      throw new Error(`Grok API failed: ${response.status}`);
     }
-    
-    // Try JSON-LD structured data
-    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
-    if (jsonLdMatch && !company) {
-      try {
-        const jsonLd = JSON.parse(jsonLdMatch[1]);
-        if (jsonLd.hiringOrganization?.name) {
-          company = jsonLd.hiringOrganization.name;
-        }
-        if (jsonLd.title) {
-          title = jsonLd.title;
-        }
-      } catch {}
-    }
-    
-    return { 
-      title: title || 'Unknown Position', 
-      company: company || 'Unknown Company', 
-      description: html.substring(0, 3000) 
-    };
-  } catch (error) {
-    console.error('Failed to fetch job URL:', error);
-    return { title: 'Unknown Position', company: 'Unknown Company', description: '' };
-  }
-}
 
-// Parse decision makers from Grok response
-function parseDecisionMakers(response: string): DecisionMaker[] {
-  const decisionMakers: DecisionMaker[] = [];
-  
-  // Look for our formatted lines
-  const lines = response.split('\n');
-  for (const line of lines) {
-    // Try pipe-separated format
-    const match = line.match(/DECISION_MAKER:\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]*)\s*\|\s*(.*)/i);
-    if (match) {
-      decisionMakers.push({
-        name: match[1].trim(),
-        title: match[2].trim(),
-        linkedin: match[3].trim() || undefined,
-        email: match[4].trim() || undefined,
-        confidence: (match[3] || match[4]) ? 'medium' : 'low',
-        source: 'Grok via Puter'
-      });
-      continue;
-    }
-    
-    // Try bullet point format
-    const bulletMatch = line.match(/^[\*\-]\s*(.+?)\s*[-–]\s*(.+?)(?:\s*\(([^)]+)\))?/);
-    if (bulletMatch) {
-      decisionMakers.push({
-        name: bulletMatch[1].trim(),
-        title: bulletMatch[2].trim(),
-        linkedin: bulletMatch[3]?.includes('linkedin') ? bulletMatch[3] : undefined,
-        confidence: 'low',
-        source: 'Grok via Puter'
-      });
-    }
-  }
-  
-  return decisionMakers;
-}
-
-// Research decision makers
-async function findDecisionMakers(company: string, jobTitle: string): Promise<DecisionMaker[]> {
-  const query = `Find the hiring manager or decision makers for a "${jobTitle}" position at ${company}.
-
-List people who would be involved in hiring for this role:
-- HR managers or recruiters
-- Department heads or managers
-- C-level executives (CTO, CEO, etc.)
-
-For each person, provide:
-1. Full name
-2. Job title  
-3. LinkedIn profile URL (if available)
-4. Email address (if publicly available)
-
-Format each as:
-DECISION_MAKER: Name | Title | LinkedIn URL | Email`;
-
-  try {
-    const result = await searchWithPuterCloud(query);
-    const decisionMakers = parseDecisionMakers(result);
-    
-    if (decisionMakers.length > 0) {
-      return decisionMakers;
-    }
-    
-    // Generate fallback if parsing failed
-    return generateFallbackResults(company, jobTitle);
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    return parseGrokResponse(content);
   } catch (error) {
     console.error('Grok search failed:', error);
+    return searchWithPuter(company, jobTitle);
+  }
+}
+
+// Free fallback using Puter.js
+async function searchWithPuter(company: string, jobTitle: string): Promise<DecisionMaker[]> {
+  const prompt = `Find decision makers for "${jobTitle}" position at "${company}".
+
+List people who would be involved in hiring:
+- HR managers, recruiters
+- Department heads, directors
+- C-level executives (CTO, CEO, etc.)
+
+For each person provide:
+NAME: [name]
+TITLE: [title]
+LINKEDIN: [URL or Not found]
+EMAIL: [email or Not found]
+CONFIDENCE: [high/medium/low]`;
+
+  try {
+    // Puter.js free API
+    const response = await fetch('https://api.puter.com/drivers/call', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        interface: 'puter-chat',
+        driver: 'grok',
+        method: 'complete',
+        args: {
+          messages: [
+            { role: 'system', content: 'You are a business research assistant. Find real people. Be factual.' },
+            { role: 'user', content: prompt }
+          ]
+        }
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Puter API failed');
+    }
+
+    const data = await response.json();
+    const content = data.result?.message?.content || data.message?.content || '';
+    const parsed = parseGrokResponse(content);
+    
+    return parsed.length > 0 ? parsed : generateFallbackResults(company, jobTitle);
+  } catch (error) {
+    console.error('Puter search failed:', error);
     return generateFallbackResults(company, jobTitle);
   }
+}
+
+function parseGrokResponse(content: string): DecisionMaker[] {
+  const results: DecisionMaker[] = [];
+  
+  // Split by the separator pattern
+  const blocks = content.split(/NAME:|---/).filter(s => s.trim());
+  
+  for (const block of blocks) {
+    if (!block.includes('TITLE:')) continue;
+    
+    const nameMatch = block.match(/^[^\n]+/);
+    const titleMatch = block.match(/TITLE:\s*([^\n]+)/);
+    const linkedinMatch = block.match(/LINKEDIN:\s*([^\n]+)/);
+    const emailMatch = block.match(/EMAIL:\s*([^\n]+)/);
+    const confidenceMatch = block.match(/CONFIDENCE:\s*(high|medium|low)/i);
+    
+    if (nameMatch && titleMatch) {
+      results.push({
+        name: nameMatch[0].trim(),
+        title: titleMatch[1].trim(),
+        linkedin: linkedinMatch?.[1]?.trim() !== 'Not found' ? linkedinMatch?.[1]?.trim() : undefined,
+        email: emailMatch?.[1]?.trim() !== 'Not found' ? emailMatch?.[1]?.trim() : undefined,
+        confidence: (confidenceMatch?.[1]?.toLowerCase() as 'high' | 'medium' | 'low') || 'medium',
+        source: 'Grok AI Search'
+      });
+    }
+  }
+  
+  return results.length > 0 ? results : [];
 }
 
 function generateFallbackResults(company: string, jobTitle: string): DecisionMaker[] {
-  const searchQuery = encodeURIComponent(`${company} ${jobTitle} hiring manager`);
-  
   return [
     {
-      name: 'Manual Research Required',
+      name: 'Search LinkedIn',
       title: 'Hiring Manager',
       confidence: 'low',
-      source: 'Fallback - Grok unavailable',
-      linkedin: `https://www.linkedin.com/search/results/people/?keywords=${searchQuery}`
-    },
-    {
-      name: 'Company Page',
-      title: 'HR Department',
-      confidence: 'low',
-      source: 'LinkedIn search',
-      linkedin: `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(company)}`
+      source: 'Manual search required',
+      linkedin: `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(company)} ${encodeURIComponent(jobTitle)} hiring`
     }
   ];
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body: ResearchRequest = await request.json();
-    const { jobUrl } = body;
+    const body = await request.json();
+    const { company, jobTitle } = body;
 
-    if (!jobUrl) {
-      return NextResponse.json({ error: 'Job URL is required' }, { status: 400 });
+    if (!company || !jobTitle) {
+      return NextResponse.json({ error: 'Company and job title are required' }, { status: 400 });
     }
 
-    console.log('Researching job URL:', jobUrl);
+    console.log(`Researching: ${company} - ${jobTitle}`);
 
-    // Step 1: Extract job details from URL
-    const jobDetails = await extractJobDetails(jobUrl);
-    console.log('Extracted:', jobDetails);
-
-    // Step 2: Find decision makers using Puter/Grok (no API key needed)
-    const decisionMakers = await findDecisionMakers(
-      jobDetails.company,
-      jobDetails.title
-    );
-
-    // Step 3: Build company info
-    let website = '';
-    try {
-      website = new URL(jobUrl).hostname.replace('www.', '');
-    } catch {
-      website = 'Unknown';
-    }
-
-    const companyInfo = {
-      name: jobDetails.company,
-      size: 'Research required',
-      industry: 'Research required',
-      website,
-    };
-
-    // Step 4: Generate suggestions
-    const suggestions = [
-      `Search LinkedIn for "${jobDetails.company}" employees`,
-      `Check company website for team/leadership page`,
-      `Look for recent news about ${jobDetails.company} for conversation starters`,
-      `Connect with decision makers before applying`,
-    ];
+    // Search using Grok
+    const decisionMakers = await searchWithGrok(company, jobTitle);
 
     const result: ResearchResult = {
-      company: jobDetails.company,
-      jobTitle: jobDetails.title,
+      company,
+      jobTitle,
       decisionMakers,
-      companyInfo,
-      suggestions,
+      companyInfo: {
+        website: company.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com',
+      },
+      suggestions: [
+        `Verify the contacts on LinkedIn before reaching out`,
+        `Check recent company news for conversation starters`,
+        `Look for mutual connections for warm introductions`,
+      ]
     };
 
     return NextResponse.json(result);
   } catch (error) {
     console.error('Research error:', error);
     return NextResponse.json(
-      { error: 'Failed to research job posting', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to research. Please try again.' },
       { status: 500 }
     );
   }
