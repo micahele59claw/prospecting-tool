@@ -1,5 +1,7 @@
 headersOrigin = "inline"
 redirectsOrigin = "inline"
+functionsDirectory = "/home/node/.openclaw/workspace/prospecting-tool/netlify/functions"
+functionsDirectoryOrigin = "config"
 
 [functions]
 
@@ -12,10 +14,11 @@ package = "@netlify/plugin-nextjs"
 [plugins.inputs]
 
 [build]
-publish = "/home/node/.openclaw/workspace/prospecting-tool/out"
+publish = "/home/node/.openclaw/workspace/prospecting-tool/.next"
 publishOrigin = "config"
 commandOrigin = "config"
 command = "pnpm build"
+functions = "/home/node/.openclaw/workspace/prospecting-tool/netlify/functions"
 
 [build.environment]
 

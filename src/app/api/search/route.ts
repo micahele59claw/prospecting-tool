@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    const { companyName, jobTitle, tavilyApiKey, groqApiKey } = await req.json();
+    const { companyName, jobTitle, groqApiKey } = await req.json();
 
-    if (!tavilyApiKey || !groqApiKey) {
-      return NextResponse.json({ error: 'Both Tavily and Groq API keys are required' }, { status: 400 });
+    // Tavily key is hardcoded in backend - users don't need to provide it
+    const tavilyApiKey = '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';
+
+    if (!groqApiKey) {
+      return NextResponse.json({ error: 'Groq API key is required' }, { status: 400 });
     }
 
     // Step 1: Search with Tavily

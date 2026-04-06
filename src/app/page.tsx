@@ -26,8 +26,6 @@ export default function Home() {
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [error, setError] = useState('');
   const [groqApiKey, setGroqApiKey] = useState('');
-  const [tavilyApiKey, setTavilyApiKey] = useState('');
-  const [useSearch, setUseSearch] = useState(true);
 
   const handleResearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,94 +39,37 @@ export default function Home() {
       return;
     }
 
-    if (useSearch && !tavilyApiKey) {
-      setError('Please enter your Tavily API key (or disable search)');
-      setLoading(false);
-      return;
-    }
-
     try {
-      if (useSearch) {
-        // Use Tavily + Groq for real search-based results
-        const response = await fetch('/api/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            companyName,
-            jobTitle,
-            tavilyApiKey,
-            groqApiKey,
-          }),
-        });
-
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          throw new Error(err.error || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const decisionMakers = parseResponse(data.extractedContent, companyName, jobTitle);
-
-        setResult({
-          company: companyName,
+      // Always use Tavily search (backend has the key)
+      const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyName,
           jobTitle,
-          decisionMakers,
-          sources: data.sources,
-          suggestions: [
-            `Verify these contacts on LinkedIn before reaching out`,
-            `Check ${companyName}'s careers page for specific recruiters`,
-            `Look for mutual connections for warm introductions`,
-          ],
-        });
-      } else {
-        // Fallback: Groq-only mode (hallucination warning)
-        const prompt = `For a "${jobTitle}" position at "${companyName}", list hiring managers, HR directors, and department heads who would be involved in hiring. Provide realistic contacts. Format each as:
+          groqApiKey,
+        }),
+      });
 
-NAME: [Full Name]
-TITLE: [Job Title]
-LINKEDIN: [LinkedIn URL or "Search on LinkedIn"]
-EMAIL: [Email or "Not available"]
-CONFIDENCE: [high/medium/low]
-
-List 3-5 contacts. Be realistic about titles and departments.`;
-
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${groqApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-              { role: 'system', content: 'You are a helpful assistant that researches company decision makers. Always respond with structured data in the format requested.' },
-              { role: 'user', content: prompt }
-            ],
-            temperature: 0.7,
-            max_tokens: 2000,
-          }),
-        });
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || '';
-        const decisionMakers = parseResponse(content, companyName, jobTitle);
-
-        setResult({
-          company: companyName,
-          jobTitle,
-          decisionMakers,
-          suggestions: [
-            `⚠️ Results may not be accurate - no real search was performed`,
-            `Verify these contacts on LinkedIn before reaching out`,
-            `Enable Tavily search for real results`,
-          ],
-        });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `API error: ${response.status}`);
       }
+
+      const data = await response.json();
+      const decisionMakers = parseResponse(data.extractedContent, companyName, jobTitle);
+
+      setResult({
+        company: companyName,
+        jobTitle,
+        decisionMakers,
+        sources: data.sources,
+        suggestions: [
+          `Verify these contacts on LinkedIn before reaching out`,
+          `Check ${companyName}'s careers page for specific recruiters`,
+          `Look for mutual connections for warm introductions`,
+        ],
+      });
     } catch (err) {
       console.error('Research error:', err);
       setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
@@ -189,44 +130,16 @@ List 3-5 contacts. Be realistic about titles and departments.`;
       <div className="max-w-4xl mx-auto">
         <h1 className="text-4xl font-bold mb-2 text-center">🔍 Job Prospecting Tool</h1>
         <p className="text-gray-400 text-center mb-8">
-          Real search with Tavily + Groq AI for accurate results
+          Real search powered by Tavily + Groq AI
         </p>
 
         <div className="bg-gray-800 rounded-lg p-6 mb-8">
           <form onSubmit={handleResearch} className="space-y-4">
-            <div className="flex items-center gap-3 mb-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useSearch}
-                  onChange={(e) => setUseSearch(e.target.checked)}
-                  className="w-5 h-5 rounded"
-                />
-                <span className="text-sm">Use Tavily Search (recommended)</span>
-              </label>
-              {useSearch && (
-                <span className="text-xs text-green-400 bg-green-400/10 px-2 py-1 rounded">
-                  ✓ Real results
-                </span>
-              )}
+            <div className="bg-green-500/10 border border-green-500/50 rounded-lg p-3">
+              <p className="text-sm text-green-400">
+                ✅ Tavily search enabled - no extra API key needed!
+              </p>
             </div>
-
-            {useSearch && (
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Tavily API Key</label>
-                <input
-                  type="password"
-                  value={tavilyApiKey}
-                  onChange={(e) => setTavilyApiKey(e.target.value)}
-                  placeholder="tvly-..."
-                  className="w-full px-4 py-3 rounded-lg bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none font-mono text-sm"
-                  required={useSearch}
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Free at <a href="https://tavily.com" target="_blank" className="text-blue-400 hover:underline">tavily.com</a> (1,000 searches/month)
-                </p>
-              </div>
-            )}
 
             <div>
               <label className="block text-sm text-gray-400 mb-2">Groq API Key</label>
@@ -275,7 +188,7 @@ List 3-5 contacts. Be realistic about titles and departments.`;
               {loading ? (
                 <>
                   <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>
-                  {useSearch ? 'Searching...' : 'AI is thinking...'}
+                  Searching...
                 </>
               ) : (
                 '🔍 Find Decision Makers'
@@ -369,7 +282,7 @@ List 3-5 contacts. Be realistic about titles and departments.`;
           <div className="bg-gray-800/50 rounded-lg p-6">
             <h3 className="font-bold mb-3">How it works:</h3>
             <ol className="list-decimal list-inside space-y-2 text-gray-400">
-              <li>Get free API keys from Tavily and Groq</li>
+              <li>Enter your free Groq API key</li>
               <li>Enter company name and job title</li>
               <li>Tavily searches for real hiring information</li>
               <li>Groq AI extracts structured contact data</li>
